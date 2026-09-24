@@ -1,0 +1,7 @@
+{
+    "author": "TeamGreg Modding",
+    "name": "gregMod.NotesHUD",
+    "version": "1.0.0",
+    "description": "In-game post-it notebook (IPs, shop item #s, notes) with per-save persistence via GregCore.",
+    "dependencies": []
+}
