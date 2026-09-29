@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Notes orphaned after normal progress ("log back in, notes gone"): scope is now
+  scene-name based and never reset on scene change (same bug class as IPAM's old
+  `ModSaveScope`, which hashed money/device counts).
+- Keystrokes inside the debounce window are flushed on scene change instead of
+  discarded (`OnScopeInvalidated` saves before invalidating).
+- Crash-safe writes: atomic tmp+move with `.bak` fallback on read; failed saves
+  stay dirty and are retried instead of silently dropped.
 - Replaced removed gregCore `GregMenuBinding` API with `GregMenuRegistry` opener/closer (+ open-state reporting) — builds against current gregCore again.
 
 

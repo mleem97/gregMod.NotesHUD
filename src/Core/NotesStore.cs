@@ -91,8 +91,17 @@ namespace GregMod.NotesHUD.Core
                 }
                 catch { }
                 var file = new NotesFile { Title = _model.Title ?? "", Body = _model.Body ?? "" };
-                try { File.WriteAllText(path, JsonSerializer.Serialize(file)); } catch { }
-                _dirty = false;
+                try
+                {
+                    AtomicFile.WriteAllText(path, JsonSerializer.Serialize(file));
+                    _dirty = false;
+                }
+                catch (Exception ex)
+                {
+                    // Disk full / no permission: keep dirty so the text is
+                    // retried on the next tick instead of silently dropped.
+                    try { MelonLogger.Warning("[NotesHUD] Save failed, will retry: " + ex.GetBaseException().Message); } catch { }
+                }
             }
             catch { }
         }
@@ -103,13 +112,13 @@ namespace GregMod.NotesHUD.Core
             _loadedForScope = true;
             try
             {
-                // 1) Per-save file wins.
+                // 1) Per-save file wins (backup fallback on torn writes).
                 string path = ModSaveScope.GetNotesFilePath();
-                if (File.Exists(path))
+                if (File.Exists(path) || File.Exists(path + ".bak"))
                 {
                     try
                     {
-                        var file = JsonSerializer.Deserialize<NotesFile>(File.ReadAllText(path));
+                        var file = JsonSerializer.Deserialize<NotesFile>(AtomicFile.ReadAllTextWithBackup(path));
                         if (file != null)
                         {
                             _model.SetTitle(file.Title);
@@ -117,7 +126,10 @@ namespace GregMod.NotesHUD.Core
                             return;
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        try { MelonLogger.Warning("[NotesHUD] Notes file unreadable, trying save mirror: " + ex.GetBaseException().Message); } catch { }
+                    }
                 }
                 // 2) Fall back to the live-save mirror (gregCore only).
                 try
@@ -143,6 +155,9 @@ namespace GregMod.NotesHUD.Core
 
         internal static void OnScopeInvalidated()
         {
+            // Flush pending keystrokes first: invalidating on scene change
+            // previously discarded everything still inside the debounce window.
+            try { if (_loadedForScope && _dirty) SaveToScope(_loadedScope); } catch { }
             _loadedForScope = false;
             _loadedScope = "";
             _dirty = false;

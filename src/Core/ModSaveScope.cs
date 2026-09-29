@@ -28,9 +28,11 @@ namespace GregMod.NotesHUD.Core
 
         internal static void NotifySceneLoaded()
         {
-            _captured = false;
+            // Do NOT invalidate the captured scope on scene change: the scope
+            // is scene-name based (stable across progress), and resetting it
+            // here orphaned notes after every load. Only refresh the binding
+            // marker so diagnostics stay current.
             _bindingChecked = false;
-            _currentScopeId = null;
         }
 
         internal static void TickCapture()
@@ -38,38 +40,18 @@ namespace GregMod.NotesHUD.Core
             if (_captured) return;
             try
             {
-                if (MainGameManager.instance == null) return;
-
-                var sb = new StringBuilder(128);
-                try { sb.Append(SceneManager.GetActiveScene().name ?? "?"); }
-                catch { sb.Append("?"); }
-
-                try
-                {
-                    var servers = UnityEngine.Object.FindObjectsOfType<Server>();
-                    sb.Append("|srv:").Append(servers != null ? servers.Length : 0);
-                }
-                catch { sb.Append("|srv:?"); }
-
-                try
-                {
-                    var switches = UnityEngine.Object.FindObjectsOfType<NetworkSwitch>();
-                    sb.Append("|sw:").Append(switches != null ? switches.Length : 0);
-                }
-                catch { sb.Append("|sw:?"); }
-
-                try
-                {
-                    var pm = PlayerManager.instance;
-                    var pc = pm != null ? pm.playerClass : null;
-                    if (pc != null) sb.Append("|m:").Append(pc.money);
-                }
+                // Stable scope: scene name only. Device counts and money are
+                // deliberately excluded — they change during normal play and
+                // previously orphaned the notes on every reload of the SAME
+                // save (same bug class as gregMod.IPAM's old ModSaveScope).
+                string sceneName = "?";
+                try { sceneName = SceneManager.GetActiveScene().name ?? "?"; }
                 catch { }
 
-                _currentScopeId = HashScope(sb.ToString());
+                _currentScopeId = HashScope("scene:" + sceneName);
                 _captured = true;
             }
-            catch { /* stay uncaptured until gameplay is ready */ }
+            catch { /* retry next tick */ }
         }
 
         /// <summary>True when the notes file for this scope may be used.</summary>
@@ -77,9 +59,21 @@ namespace GregMod.NotesHUD.Core
         {
             if (_bindingChecked) return _captured;
             TickCapture();
-            if (!_captured) return false;
+            if (!_captured)
+            {
+                // Capture is scene-only now, so this is rare (very early boot).
+                // Return true anyway so callers use the stable fallback scope
+                // instead of deferring writes that could be lost.
+                _bindingChecked = true;
+                return true;
+            }
             _bindingChecked = true;
-            SaveBinding(_currentScopeId);
+            try
+            {
+                if (LoadBindingScope() != _currentScopeId)
+                    SaveBinding(_currentScopeId);
+            }
+            catch { /* diagnostics only */ }
             return true;
         }
 
@@ -137,9 +131,21 @@ namespace GregMod.NotesHUD.Core
                 var path = GetBindingPath();
                 var dir = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-                File.WriteAllText(path, JsonSerializer.Serialize(new SaveBindingFile { ScopeId = scopeId }));
+                AtomicFile.WriteAllText(path, JsonSerializer.Serialize(new SaveBindingFile { ScopeId = scopeId }));
             }
             catch { /* best-effort */ }
+        }
+
+        private static string LoadBindingScope()
+        {
+            try
+            {
+                var path = GetBindingPath();
+                if (!File.Exists(path)) return null;
+                var file = JsonSerializer.Deserialize<SaveBindingFile>(AtomicFile.ReadAllTextWithBackup(path));
+                return file != null ? file.ScopeId : null;
+            }
+            catch { return null; }
         }
 
         private sealed class SaveBindingFile
